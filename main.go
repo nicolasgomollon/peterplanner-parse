@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bitbucket.org/zombiezen/cardcpx/natsort"
 	"encoding/json"
 	"github.com/nicolasgomollon/peterplanner/parsers"
 	"github.com/nicolasgomollon/peterplanner/types"
@@ -88,6 +89,55 @@ func ParseWebSOC(deptDir string, courses *map[string]types.Course, termsMap *map
 	}
 }
 
+func ProcessCourses(courses *map[string]types.Course) {
+	for key, course := range *courses {
+		course.Offered = course.TermsOffered()
+		for _, prereqsAND := range course.Prerequisites {
+			for _, prereqOR := range prereqsAND {
+				splitPrrq := strings.Split(prereqOR, "|")
+				prereq := strings.Replace(splitPrrq[0], " ", "", -1)
+				if strings.HasPrefix(splitPrrq[0], "NO ") {
+					continue
+				}
+				if c, ok := (*courses)[prereq]; ok {
+					requiredBy := c.RequiredBy
+					if requiredBy == nil {
+						requiredBy = make([]types.CourseGroup, 0)
+					}
+					added := false
+					for i, cGrp := range requiredBy {
+						if cGrp.Department == course.Department {
+							numbers := cGrp.Numbers
+							numbers = append(numbers, course.Number)
+							natsort.Strings(numbers)
+							cGrp.Numbers = numbers
+							requiredBy[i] = cGrp
+							added = true
+							break
+						}
+					}
+					if !added {
+						numbers := make([]string, 0)
+						numbers = append(numbers, course.Number)
+						cGrp := types.CourseGroup{Department: course.Department, Numbers: numbers}
+						requiredBy = append(requiredBy, cGrp)
+						sort.Sort(requiredBy)
+					}
+					c.RequiredBy = requiredBy
+					(*courses)[prereq] = c
+				}
+				//
+				// ALSO, WHAT TO DO WITH ITEMS LIKE "LOWER DIVISION WRITING"?
+				//
+				// information from:
+				// https://www.reg.uci.edu/enrollment/restrict_codes.html
+				//
+			}
+		}
+		(*courses)[key] = course
+	}
+}
+
 func main() {
 	termsMap := make(map[string]bool, 0)
 	catalogue := types.Catalogue{}
@@ -97,6 +147,7 @@ func main() {
 		ParsePrerequisites(deptDir, &courses)
 		ParseWebSOC(deptDir, &courses, &termsMap)
 	}
+	ProcessCourses(&courses)
 	catalogue.Courses = courses
 	
 	terms := make([]string, len(termsMap))
